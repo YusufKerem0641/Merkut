@@ -1,50 +1,39 @@
 import asyncio
-import threading
-import sys
-
+from mavsdk.offboard import Attitude, OffboardError
+from mavsdk.telemetry import FlightMode
 from mods.Build import build
 from mods.SimpleMovements import straightFlight, takeoff
 from mods.TurnXDegreeMod import turn_fixed_wing
-from mavsdk.offboard import Attitude
-from mavsdk import System
-from mavsdk.offboard import OffboardError
-from mavsdk.telemetry import FlightMode
 
-should_run = False  # Global flag to start/stop the application
-task = None         # Global variable for the asyncio task
+# Global değişkenler
+should_run = False  # Uygulamayı başlat/durdur bayrağı
+run_task = None     # run fonksiyonu için görev
 
-async def run():
+async def run(drone):
+    """Drone'un OFFBOARD modunda çalışmasını sağlayan fonksiyon."""
     global should_run
+    try:
+        print("Kumanda bekleniyor...")
+        await drone.action.arm()
+        await asyncio.sleep(1)
+        await drone.offboard.set_attitude(Attitude(0.0, 0.0, 0.0, 1))
 
-    drone = await build()
-    print(f"kumanda bekleniyor")
-    
-    
+        print("STRAIGHT FLIGHT BAŞLADI")
+        await straightFlight(drone, 5)
+        print("STRAIGHT FLIGHT TAMAMLANDI")
 
-    print("test")
-    while True:
-        if await check_offboard_mode(drone):
-            await asyncio.sleep(10)
-            break
-        await asyncio.sleep(0.1)
-
-    await drone.action.arm()
-    await asyncio.sleep(1)
-    await drone.offboard.set_attitude(Attitude(0.0, 0.0, 0.0, 1))
-
-    print("STRAIGHT FLIGHT BASLADI")
-    # await straightFlight(drone, 5)
-    print("STRAIGHT FLIGHT TAMAMLANDI")
-
-    print("180 DERECE DONUS BASLADI")
-    await turn_fixed_wing(drone, -15)
-    print("basladi")
-    await turn_fixed_wing(drone, 15)
-    await turn_fixed_wing(drone, -40)
-    await turn_fixed_wing(drone, 40)
-    print("180 DERECE DONUS TAMAMLANDI")
+        print("180 DERECE DÖNÜŞ BAŞLADI")
+        await turn_fixed_wing(drone, -15)
+        await turn_fixed_wing(drone, 15)
+        await turn_fixed_wing(drone, -40)
+        await turn_fixed_wing(drone, 40)
+        print("180 DERECE DÖNÜŞ TAMAMLANDI")
+    except asyncio.CancelledError:
+        print("Run görevi iptal edildi.")
+        # Gerekirse temizlik işlemleri burada yapılabilir
 
 async def check_offboard_mode(drone):
+    """Drone'un OFFBOARD modunda olup olmadığını kontrol eder."""
     async for flight_mode in drone.telemetry.flight_mode():
         if flight_mode == FlightMode.OFFBOARD:
             print("Drone OFFBOARD modunda!")
@@ -53,31 +42,41 @@ async def check_offboard_mode(drone):
             print(f"Drone OFFBOARD modunda değil, mevcut mod: {flight_mode}")
             return False
 
-def input_listener(loop):
-    global should_run, task
+async def input_listener(drone):
+    """Drone'un modunu izler ve run fonksiyonunu başlatır/durdurur."""
+    global should_run, run_task
 
     while True:
-        input("Enter'a basarak başlat/durdur...\n")
-        should_run = not should_run
-
-        if should_run:
+        is_offboard = await check_offboard_mode(drone)
+        if is_offboard and not should_run:
+            should_run = True
             print("Uygulama başlatılıyor...")
-            task = asyncio.run_coroutine_threadsafe(run(), loop)
-        else:
+            run_task = asyncio.create_task(run(drone))
+        elif not is_offboard and should_run:
+            should_run = False
             print("Uygulama durduruluyor...")
-            if task:
-                task.cancel()
+            if run_task:
+                run_task.cancel()
+                run_task = None
+        await asyncio.sleep(0.1)  # Döngünün çok hızlı çalışmasını önler
+
+async def async_main():
+    """Asenkron başlatma fonksiyonu."""
+    drone = await build()  # Drone nesnesini oluştur
+    asyncio.create_task(input_listener(drone))  # input_listener'ı görev olarak başlat
 
 def main():
+    """Senkron ana fonksiyon."""
     loop = asyncio.new_event_loop()
-    threading.Thread(target=input_listener, args=(loop,), daemon=True).start()
-
+    asyncio.set_event_loop(loop)
     try:
-        loop.run_forever()
+        loop.run_until_complete(async_main())  # async_main'i çalıştır
+        loop.run_forever()  # Olay döngüsünü sürekli çalışır halde tut
     except KeyboardInterrupt:
         print("Çıkılıyor...")
     finally:
         loop.stop()
+        loop.close()
 
 if __name__ == "__main__":
     main()

@@ -1,5 +1,6 @@
 import time as t
 from mavsdk.offboard import Attitude
+import asyncio
 
 
 async def straightFlight(drone,
@@ -32,6 +33,7 @@ async def straightFlight(drone,
             await drone.offboard.set_attitude(
                 Attitude(0, pitch, 0.0, thrust)  # Roll, Pitch, Yaw, Throttle
             )
+            await asyncio.sleep(0.001)
                 
     except Exception as e:
         print(f"Straight Flight Hatasi: {e}")
